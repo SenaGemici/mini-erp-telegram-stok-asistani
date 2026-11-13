@@ -155,7 +155,7 @@ Tablodaki örnek SKU değerleri yalnızca örnektir; kendi ürün kodlarınızı
 ## Proje yapısı
 
 ```text
-workflow/mini-erp-telegram-stok-asistani.json   n8n iş akışı (paylaşım için temizlenmiş kopya)
+workflow/mini-erp-telegram-stok-asistani.json   n8n iş akışı 
 docs/                                           Demo ekran görüntüleri
 README.md
 ```
