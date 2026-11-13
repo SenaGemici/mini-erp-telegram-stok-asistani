@@ -1,0 +1,779 @@
+{
+  "name": "Mini ERP - Telegram Stok Asistanı",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -480,
+        48
+      ],
+      "id": "cf4ba12f-dfce-4814-8790-5655d8deea09",
+      "name": "Telegram Trigger",
+      "webhookId": "99fa5677-f856-4481-b3b1-b6451dc11711"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "effc58e6-360c-4362-82a4-78206e134c43",
+              "leftValue": "={{ $json.message.from.id }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        -304,
+        48
+      ],
+      "id": "0eec458c-2789-49bc-a669-71a57d55c1a6",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1072,
+        576
+      ],
+      "id": "da17df8a-7a93-4219-89c3-409058f2553e",
+      "name": "Send a text message",
+      "webhookId": "9dc32e1c-19d8-4743-bf3b-704dce7eb6e8"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "products",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        96,
+        -288
+      ],
+      "id": "1eb9b723-eea1-4742-89de-cb5ecbe045a7",
+      "name": "Get row(s) in sheet"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "products",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        288,
+        -96
+      ],
+      "id": "4f4edb16-34bd-4735-8dba-4c0f2165690e",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Sen bir stok asistanının mesaj çözümleyicisisin.\nKullanıcının mesajını analiz et. Yalnızca geçerli JSON döndür.\nMarkdown veya açıklama ekleme.\n\nİşlemler:\nquery: stok sorgulama\nsale: satış, stoktan düşme\nreturn: iade, stoğa ekleme\nreceipt: yeni ürün gelişi, stoğa ekleme\nset: stoğu belirli bir sayıya ayarlama\nunknown: anlaşılamayan işlem\n\nAlanlar:\noperation: yukarıdaki işlemlerden biri\nproduct_name: mesajda belirtilen ürün adı; belirtilmemişse null\nquantity: miktar; belirtilmemişse null\n\nÜrün veya miktar uydurma. Stok hesabı yapma.\nStok sorgusunda quantity null olsun.\n\nÖrnek:\nMesaj: 2 klavye sattım\nCevap: {\"operation\":\"sale\",\"product_name\":\"Klavye\",\"quantity\":2}\n\nKullanıcının mesajı:\n{{ $('Telegram Trigger').first().json.message.text }}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        272,
+        112
+      ],
+      "id": "1c3832e2-36ce-4c5c-b737-3f520197b343",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        288,
+        320
+      ],
+      "id": "44aa4607-9ca4-4715-85fa-78147c250e37",
+      "name": "Google Gemini Chat Model"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.text;\nlet intent;\n\ntry {\n  intent = JSON.parse(\n    raw.replace(/```(?:json)?/gi, '').trim()\n  );\n} catch {\n  return [{\n    json: {\n      operation: 'unknown',\n      reply: 'Mesajı çözümleyemedim. Tekrar yazar mısın?',\n      context_sku: null\n    }\n  }];\n}\n\nconst products = $('Aggregate').first().json.products;\nconst memory = $('Hafızayı Oku').first().json;\n\nconst normalize = value =>\n  String(value ?? '').trim().toLocaleLowerCase('tr-TR');\n\n// Ürün açıkça belirtilmişse onu ara.\n// Belirtilmemişse bu sohbetin son ürününü kullan.\nconst matches = intent.product_name\n  ? products.filter(p =>\n      normalize(p.product_name) === normalize(intent.product_name) ||\n      normalize(p.sku) === normalize(intent.product_name)\n    )\n  : products.filter(p =>\n      memory.last_sku && p.sku === memory.last_sku\n    );\n\nconst product = matches.length === 1 ? matches[0] : null;\n\nlet reply;\n\nif (!product) {\n  reply = intent.product_name\n    ? `\"${intent.product_name}\" ürünü bulunamadı veya birden fazla eşleşme var. Ürün kodunu belirtir misin?`\n    : 'Hangi ürün için işlem yapmak istiyorsun?';\n} else if (intent.operation === 'query') {\n  reply = `${product.product_name} stoğu: ${product.stock} adet.`;\n} else {\n  reply = 'İşlem kontrol ediliyor.';\n}\n\nreturn [{\n  json: {\n    ...intent,\n    product_name: product\n      ? product.product_name\n      : intent.product_name,\n    context_sku: product ? product.sku : null,\n    reply\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -16
+      ],
+      "id": "31b4d83d-8bc0-48bd-8e3b-0f78b8c6ddcf",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "d83db2bd-8ab3-4b4d-9727-d6cacb7b6fb4",
+              "leftValue": "={{ $json.operation }}",
+              "rightValue": "query",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        1152,
+        -32
+      ],
+      "id": "ec871883-f9d9-4c68-9e0b-1430665b9e02",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const intent = $input.first().json;\nconst products = $('Aggregate').first().json.products;\n\nconst normalize = value =>\n  String(value ?? '').trim().toLocaleLowerCase('tr-TR');\n\nconst finish = (reply, extra = {}) => [{\n  json: { ...intent, can_update: false, reply, ...extra }\n}];\n\nconst allowed = ['sale', 'return', 'receipt', 'set'];\n\nif (!allowed.includes(intent.operation)) {\n  return finish('İşlemi anlayamadım. Ürün ve yapmak istediğin işlemi yazar mısın?');\n}\n\nif (!intent.product_name) {\n  return finish('Hangi ürün için işlem yapmak istiyorsun?');\n}\n\nconst matches = products.filter(p =>\n  normalize(p.product_name) === normalize(intent.product_name)\n);\n\nif (matches.length === 0) {\n  return finish(`\"${intent.product_name}\" adlı ürün bulunamadı.`);\n}\n\nif (matches.length > 1) {\n  return finish('Birden fazla ürün eşleşti. Ürünü netleştirir misin?');\n}\n\nconst quantity = intent.quantity;\n\nif (\n  typeof quantity !== 'number' ||\n  !Number.isSafeInteger(quantity) ||\n  quantity < 0 ||\n  (intent.operation !== 'set' && quantity === 0)\n) {\n  return finish('Geçerli bir adet belirtir misin?');\n}\n\nconst product = matches[0];\nconst before = Number(product.stock);\n\nif (\n  product.stock === '' ||\n  product.stock == null ||\n  !Number.isSafeInteger(before) ||\n  before < 0\n) {\n  return finish('Tablodaki stok değeri geçersiz. İşlem yapılmadı.');\n}\n\nlet after;\n\nswitch (intent.operation) {\n  case 'sale':\n    after = before - quantity;\n    break;\n  case 'return':\n  case 'receipt':\n    after = before + quantity;\n    break;\n  case 'set':\n    after = quantity;\n    break;\n}\n\nif (after < 0) {\n  return finish(\n    `Yetersiz stok. ${product.product_name} için mevcut stok: ${before} adet.`\n  );\n}\n\nif (!Number.isSafeInteger(after)) {\n  return finish('Miktar çok büyük. İşlem yapılmadı.');\n}\n\nreturn finish('Stok değişikliği hesaplandı; henüz kaydedilmedi.', {\n  can_update: true,\n  sku: product.sku,\n  product_name: product.product_name,\n  quantity,\n  before,\n  after,\n  source_text: $('Telegram Trigger').first().json.message.text\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        -128
+      ],
+      "id": "f99d86cc-b324-4cd9-ac42-296b120e650e",
+      "name": "Stok Hesapla"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "58624984-3513-419c-bcc5-4d88e66a0081",
+              "leftValue": "={{ $json.can_update }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        1424,
+        352
+      ],
+      "id": "fcc47652-ec98-4197-8447-060ac704ae2e",
+      "name": "Güncelleme Gecerli mi?"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "products",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sku": "={{ $json.sku.trim() }}",
+            "stock": "={{ $json.after }}"
+          },
+          "matchingColumns": [
+            "sku"
+          ],
+          "schema": [
+            {
+              "id": "sku",
+              "displayName": "sku",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "product_name",
+              "displayName": "product_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "stock",
+              "displayName": "stock",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1616,
+        96
+      ],
+      "id": "3a45fd07-fff8-412c-9889-af54a1b93db8",
+      "name": "Update row in sheet"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "movements",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "={{ $('Stok Hesapla').first().json.operation }}",
+            "sku": "={{ $('Stok Hesapla').first().json.sku }}",
+            "quantity": "={{ $('Stok Hesapla').first().json.quantity }}",
+            "before": "={{ $('Stok Hesapla').first().json.before }}",
+            "after": "={{ $('Stok Hesapla').first().json.after }}",
+            "status": "success",
+            "source_text": "={{ $('Stok Hesapla').first().json.source_text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "operation",
+              "displayName": "operation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sku",
+              "displayName": "sku",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quantity",
+              "displayName": "quantity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "before",
+              "displayName": "before",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "after",
+              "displayName": "after",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source_text",
+              "displayName": "source_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1792,
+        -48
+      ],
+      "id": "233b1d95-6335-430a-baed-f9975407d389",
+      "name": "Append row in sheet"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ $('Stok Hesapla').first().json.product_name + ' stoğu güncellendi: ' + $('Stok Hesapla').first().json.before + ' → ' + $('Stok Hesapla').first().json.after + ' adet. İşlem kaydedildi.' }}\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1984,
+        -224
+      ],
+      "id": "48c056bf-e545-42ef-afa1-19845b693331",
+      "name": "Send a text message1",
+      "webhookId": "bc5d1523-dfce-4521-a63e-1919369ec4c2"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "YOUR_DATA_TABLE_ID",
+          "mode": "id"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "chat_id",
+              "keyValue": "={{ String($('Telegram Trigger').first().json.message.chat.id) }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -112,
+        -144
+      ],
+      "id": "d523aca8-cf27-489d-896d-31bf1e5566a0",
+      "name": "Hafızayı Oku",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "5caa79ea-5460-4883-8dc3-a9ba1a13f4c3",
+              "leftValue": "={{ $json.context_sku }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        704,
+        128
+      ],
+      "id": "c36842c5-9a03-4b78-ab1a-3d1cde440b64",
+      "name": "Ürün buldun mu?"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "YOUR_DATA_TABLE_ID",
+          "mode": "id"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "chat_id",
+              "keyValue": "={{ String($('Telegram Trigger').first().json.message.chat.id) }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ String($('Telegram Trigger').first().json.message.chat.id) }}",
+            "last_sku": "={{ $json.context_sku }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "last_sku",
+              "displayName": "last_sku",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        944,
+        -256
+      ],
+      "id": "da96db1f-bd88-4bc0-83ff-e26ba2b05092",
+      "name": "Hafızaya yaz"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: $('Code in JavaScript').first().json\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -416
+      ],
+      "id": "f5388c0e-3859-47c9-ad4e-710457233f68",
+      "name": "İşleme Devam"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Hafızayı Oku",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message": {
+      "main": [
+        []
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Ürün buldun mu?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Stok Hesapla",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stok Hesapla": {
+      "main": [
+        [
+          {
+            "node": "Güncelleme Gecerli mi?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Güncelleme Gecerli mi?": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hafızayı Oku": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ürün buldun mu?": {
+      "main": [
+        [
+          {
+            "node": "Hafızaya yaz",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hafızaya yaz": {
+      "main": [
+        [
+          {
+            "node": "İşleme Devam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "İşleme Devam": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "nodeGroups": [],
+  "tags": []
+}
